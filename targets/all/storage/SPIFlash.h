@@ -60,6 +60,8 @@ private:
 
         OP_CHIP_ERASE = 0x60,
 
+        OP_RDID = 0x9F,
+
         PAGE_SIZE = 256,
         PAGE_MASK = PAGE_SIZE - 1,
     };
@@ -162,6 +164,7 @@ private:
     uint32_t sectorTypeCount = 0;
 
     async(ReadSFDP, uint32_t addr, Buffer data);
+    async(ReadID);
     async(WriteUnchecked, uint32_t addr, Span data);
     async(Sync);
 

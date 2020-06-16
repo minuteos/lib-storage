@@ -75,7 +75,6 @@ async_def(
 
     size = (f.sfdp.density + 1) / 8;
     sectorTypeCount = 0;
-    MYDBG("%d MB FLASH detected", size / 1024 / 1024);
 
     for (auto& sec: f.sfdp.sec)
     {
@@ -92,6 +91,17 @@ async_def(
     {
         MYDBG("%d KB ERASE OP = %02X", (1 << sector[i].bits) / 1024, sector[i].op);
     }
+
+    if (size == 0)
+    {
+        MYDBG("Density missing in SFDP, using RDID");
+        int id = await(ReadID);
+        MYDBG("RDID: mfg = %02X, type = %02X, capacity = %02X",
+            uint8_t(id), uint8_t(id >> 8), uint8_t(id >> 16));
+        size = 1 << uint8_t(id >> 16);
+    }
+
+    MYDBG("%d MB FLASH detected", size / 1024 / 1024);
 
     init = true;
 
@@ -143,6 +153,23 @@ async_def(
     f.tx[1].Receive(buffer);
     await(spi.Transfer, f.tx);
     spi.Release();
+}
+async_end
+
+async(SPIFlash::ReadID)
+async_def(
+    uint8_t op;
+    uint8_t id[3];
+    bus::SPI::Descriptor tx[2];
+)
+{
+    await(spi.Acquire, cs);
+    f.op = OP_RDID;
+    f.tx[0].Transmit(f.op);
+    f.tx[1].Receive(f.id);
+    await(spi.Transfer, f.tx);
+    spi.Release();
+    async_return(f.id[0] | f.id[1] << 8 | f.id[2] << 16);
 }
 async_end
 
