@@ -25,9 +25,11 @@ public:
     //! Initialize the SPI flash memory, reading JEDEC data, etc.
     async(Init);
     //! Reads data from the SPI flash memory into the specified buffer
-    async(Read, uint32_t addr, Buffer data);
+    async(Read, uint32_t addr, Buffer data) { return async_forward(ReadImpl, addr, data.Pointer(), data.Length()); }
     //! Writes data to the SPI flash memory
-    async(Write, uint32_t addr, Span data);
+    async(Write, uint32_t addr, Span data) { return async_forward(WriteImpl, addr, data.Pointer(), data.Length()); }
+    //! Fills a range of the SPI flash memory
+    async(Fill, uint32_t addr, uint8_t value, size_t length);
     //! Flushes any unwritten data to the SPI flash memory (noop, just for interface compatibility with BufferedSPIFlash)
     async(Flush) async_def_return(true);
     //! Erases at least the specified range of the SPI flash memory, depending on smallest sector size
@@ -44,8 +46,22 @@ public:
     uint32_t SectorTypeCount() const { return sectorTypeCount; }
     //! Gets the n-th smallest sector size in bytes
     uint32_t SectorSize(uint32_t n = 0) const { return 1 << sector[n].bits; }
+    //! Gets the n-th smallest sector size in bytes
+    uint32_t SectorMask(uint32_t n = 0) const { return (1 << sector[n].bits) - 1; }
     //! Gets the n-th smallest sector size in bits
     uint32_t SectorSizeBits(uint32_t n = 0) const { return sector[n].bits; }
+    //! Gets the address of the beginning of the sector of the specified size
+    uint32_t SectorAddress(uint32_t addr, uint32_t n = 0) const { return addr >> sector[n].bits << sector[n].bits; }
+    //! Gets the address of the beginning of the page
+    uint32_t PageAddress(uint32_t addr) const { return addr & ~PAGE_MASK; }
+    //! Checks if the two addresses are in the same sector of the specified size
+    bool IsSameSector(uint32_t addr1, uint32_t addr2, uint32_t n = 0) { return !((addr1 ^ addr2) >> sector[n].bits); }
+    //! Checks if the two addresses are on the same programmable page
+    constexpr bool IsSamePage(uint32_t addr1, uint32_t addr2) { return !((addr1 ^ addr2) >> PAGE_BITS); }
+    //! Calculates the remaining bytes from the specified address in the sector of the specified size
+    size_t SectorRemaining(uint32_t addr, uint32_t n = 0) { return (~addr & SectorMask(n)) + 1; }
+    //! Calculates the remaining bytes from the specified address in the sector of the specified size
+    constexpr size_t PageRemaining(uint32_t addr) { return (~addr & PAGE_MASK) + 1; }
 
 private:
     enum
@@ -62,7 +78,8 @@ private:
 
         OP_RDID = 0x9F,
 
-        PAGE_SIZE = 256,
+        PAGE_BITS = 8,
+        PAGE_SIZE = 1 << PAGE_BITS,
         PAGE_MASK = PAGE_SIZE - 1,
     };
 
@@ -163,9 +180,11 @@ private:
     SectorType sector[4];
     uint32_t sectorTypeCount = 0;
 
-    async(ReadSFDP, uint32_t addr, Buffer data);
+    async(ReadSFDP, uint32_t addr, Buffer buffer) { return async_forward(ReadSFDP, addr, buffer.Pointer(), buffer.Length()); }
+    async(ReadSFDP, uint32_t addr, char* buffer, size_t length);
     async(ReadID);
-    async(WriteUnchecked, uint32_t addr, Span data);
+    async(ReadImpl, uint32_t addr, char* buffer, size_t length);
+    async(WriteImpl, uint32_t addr, const char* buffer, size_t length);
     async(Sync);
 
     void AddSectorType(SectorType sec);

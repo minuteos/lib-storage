@@ -136,7 +136,7 @@ void SPIFlash::AddSectorType(SectorType st)
     }
 }
 
-async(SPIFlash::ReadSFDP, uint32_t addr, Buffer buffer)
+async(SPIFlash::ReadSFDP, uint32_t addr, char* buffer, size_t length)
 async_def(
     PACKED_UNALIGNED_STRUCT
     {
@@ -150,7 +150,7 @@ async_def(
     await(spi.Acquire, cs);
     f.req = { OP_READ_SFDP, TO_BE24(addr) };
     f.tx[0].Transmit(f.req);
-    f.tx[1].Receive(buffer);
+    f.tx[1].Receive(Buffer(buffer, length));
     await(spi.Transfer, f.tx);
     spi.Release();
 }
@@ -173,7 +173,7 @@ async_def(
 }
 async_end
 
-async(SPIFlash::Read, uint32_t addr, Buffer buffer)
+async(SPIFlash::ReadImpl, uint32_t addr, char* buffer, size_t length)
 async_def(
     PACKED_UNALIGNED_STRUCT
     {
@@ -191,43 +191,89 @@ async_def(
     await(spi.Acquire, cs);
     f.req = { OP_READ, TO_BE24(addr) };
     f.tx[0].Transmit(f.req);
-    f.tx[1].Receive(buffer);
+    f.tx[1].Receive(Buffer(buffer, length));
     await(spi.Transfer, f.tx);
     spi.Release();
 
-    MYDIAG("Read %d bytes @ %X : %H", data.Length(), addr, data);
+    MYDIAG("Read %d bytes @ %X : %H", length, addr, Span(buffer, length));
 }
 async_end
 
-async(SPIFlash::Write, uint32_t addr, Span data)
+async(SPIFlash::WriteImpl, uint32_t addr, const char* data, size_t length)
 async_def(
     PACKED_UNALIGNED_STRUCT
     {
         uint8_t op;
         uint32_t addrBE : 24;
     } req;
+    size_t written, len;
     bus::SPI::Descriptor tx[2];
 )
 {
-    if (deviceBusy)
+    while (f.written < length)
     {
-        await(Sync);
+        if (deviceBusy)
+        {
+            await(Sync);
+        }
+
+        await(spi.Acquire, cs);
+        f.req.op = OP_WREN;
+        f.tx[0].Transmit(f.req.op);
+        await(spi.Transfer, f.tx[0]);
+
+        f.len = std::min(PageRemaining(addr + f.written), length - f.written);
+        f.req = { OP_PROGRAM, TO_BE24(addr + f.written) };
+        f.tx[0].Transmit(f.req);
+        f.tx[1].Transmit(Span(data + f.written, f.len));
+        await(spi.Transfer, f.tx);
+        spi.Release();
+
+        deviceBusy = true;
+
+        MYDIAG("Written %d bytes @ %X : %H", f.len, addr + f.written, Span(data + f.written, f.len));
+        f.written += f.len;
     }
+}
+async_end
 
-    await(spi.Acquire, cs);
-    f.req.op = OP_WREN;
-    f.tx[0].Transmit(f.req.op);
-    await(spi.Transfer, f.tx[0]);
+async(SPIFlash::Fill, uint32_t addr, uint8_t value, size_t length)
+async_def(
+    uint8_t value;
+    PACKED_UNALIGNED_STRUCT
+    {
+        uint8_t op;
+        uint32_t addrBE : 24;
+    } req;
+    size_t written, len;
+    bus::SPI::Descriptor tx[2];
+)
+{
+    f.value = value;
+    while (f.written < length)
+    {
+        if (deviceBusy)
+        {
+            await(Sync);
+        }
 
-    f.req = { OP_PROGRAM, TO_BE24(addr) };
-    f.tx[0].Transmit(f.req);
-    f.tx[1].Transmit(data);
-    await(spi.Transfer, f.tx);
-    spi.Release();
+        await(spi.Acquire, cs);
+        f.req.op = OP_WREN;
+        f.tx[0].Transmit(f.req.op);
+        await(spi.Transfer, f.tx[0]);
 
-    deviceBusy = true;
+        f.len = std::min(PageRemaining(addr + f.written), length - f.written);
+        f.req = { OP_PROGRAM, TO_BE24(addr + f.written) };
+        f.tx[0].Transmit(f.req);
+        f.tx[1].TransmitSame(&f.value, f.len);
+        await(spi.Transfer, f.tx);
+        spi.Release();
 
-    MYDIAG("Written %d bytes @ %X : %H", data.Length(), addr, data);
+        deviceBusy = true;
+
+        MYDIAG("Filled %d bytes @ %X = %02X", f.len, addr + f.written, f.value);
+        f.written += f.len;
+    }
 }
 async_end
 
@@ -297,6 +343,7 @@ async_def(
 
             f.tx.Transmit(f.req);
             await(spi.Transfer, f.tx);
+            spi.Release();
 
             deviceBusy = true;
             async_return(f.end);
@@ -362,7 +409,9 @@ async_def(
         if (!GETBIT(f.status, 0))
         {
             if (f.attempt)
-                MYDIAG("status polled %d times before operation completed", f.attempt)
+            {
+                MYDIAG("status polled %d times before operation completed", f.attempt);
+            }
             deviceBusy = false;
             break;
         }
