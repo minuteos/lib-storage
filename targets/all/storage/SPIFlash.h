@@ -13,6 +13,8 @@
 
 #include <bus/SPI.h>
 
+#include <io/PipeWriter.h>
+
 namespace storage
 {
 
@@ -26,10 +28,14 @@ public:
     async(Init);
     //! Reads data from the SPI flash memory into the specified buffer
     async(Read, uint32_t addr, Buffer data) { return async_forward(ReadImpl, addr, data.Pointer(), data.Length()); }
+    //! Reads data from the SPI flash memory directly into the specified I/O pipe
+    async(ReadToPipe, io::PipeWriter pipe, uint32_t addr, size_t length, Timeout timeout = Timeout::Infinite);
     //! Writes data to the SPI flash memory
     async(Write, uint32_t addr, Span data) { return async_forward(WriteImpl, addr, data.Pointer(), data.Length()); }
     //! Fills a range of the SPI flash memory
     async(Fill, uint32_t addr, uint8_t value, size_t length);
+    //! Checks if a range of the SPI flash memory is empty
+    async(IsEmpty, uint32_t addr, size_t length);
     //! Flushes any unwritten data to the SPI flash memory (noop, just for interface compatibility with BufferedSPIFlash)
     async(Flush) async_def_return(true);
     //! Erases at least the specified range of the SPI flash memory, depending on smallest sector size

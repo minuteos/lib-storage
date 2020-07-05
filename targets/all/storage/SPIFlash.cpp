@@ -199,6 +199,50 @@ async_def(
 }
 async_end
 
+async(SPIFlash::ReadToPipe, io::PipeWriter pipe, uint32_t addr, size_t length, Timeout timeout)
+async_def(
+    PACKED_UNALIGNED_STRUCT
+    {
+        uint8_t op;
+        uint32_t addrBE : 24;
+    } req;
+    bus::SPI::Descriptor tx[2];
+    size_t read;
+    Timeout timeout;
+)
+{
+    f.timeout = timeout.MakeAbsolute();
+    f.req.op = OP_READ;
+    f.tx[0].Transmit(f.req);
+
+    while (f.read < length)
+    {
+        if (!pipe.Available() && !await(pipe.Allocate, length - f.read, f.timeout))
+        {
+            break;
+        }
+
+        auto buf = pipe.GetBuffer();
+        f.tx[1].Receive(buf.Left(spi.MaximumTransferSize()).Left(length - f.read));
+        f.req.addrBE = TO_BE24(addr + f.read);
+
+        await(spi.Acquire, cs);
+        await(spi.Transfer, f.tx);
+        spi.Release();
+
+        pipe.Advance(f.tx[1].Length());
+        f.read += f.tx[1].Length();
+
+        if (f.timeout.Elapsed())
+        {
+            break;
+        }
+    }
+
+    async_return(f.read);
+}
+async_end
+
 async(SPIFlash::WriteImpl, uint32_t addr, const char* data, size_t length)
 async_def(
     PACKED_UNALIGNED_STRUCT
@@ -274,6 +318,52 @@ async_def(
         MYDIAG("Filled %d bytes @ %X = %02X", f.len, addr + f.written, f.value);
         f.written += f.len;
     }
+}
+async_end
+
+async(SPIFlash::IsEmpty, uint32_t addr, size_t length)
+async_def(
+    PACKED_UNALIGNED_STRUCT
+    {
+        uint8_t op;
+        uint32_t addrBE : 24;
+    } req;
+    uint32_t buf[4];
+    size_t checked;
+    bus::SPI::Descriptor tx[2];
+)
+{
+    if (!length)
+    {
+        async_return(true);
+    }
+
+    if (deviceBusy)
+    {
+        await(Sync);
+    }
+
+    await(spi.Acquire, cs);
+    f.tx[0].Transmit(f.req);
+    f.req.op = OP_READ;
+    Buffer(f.buf).Fill(0xFF);
+
+    while (f.checked < length)
+    {
+        f.req.addrBE = TO_BE24(addr + f.checked);
+        f.tx[1].Receive(Buffer(f.buf, std::min(sizeof(f.buf), length - f.checked)));
+        await(spi.Transfer, f.tx);
+
+        if (f.buf[0] != ~0u || f.buf[1] != ~0u || f.buf[2] != ~0u || f.buf[3] != ~0u)
+        {
+            MYDIAG("Flash not empty @ %X: %H", addr + f.checked, Span(f.buf));
+            spi.Release();
+            async_return(false);
+        }
+        f.checked += sizeof(f.buf);
+    }
+    spi.Release();
+    async_return(true);
 }
 async_end
 
