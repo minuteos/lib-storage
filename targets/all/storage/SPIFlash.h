@@ -191,7 +191,7 @@ private:
     async(ReadID);
     async(ReadImpl, uint32_t addr, char* buffer, size_t length);
     async(WriteImpl, uint32_t addr, const char* buffer, size_t length);
-    async(Sync);
+    async(SyncAndAcquire);
 
     void AddSectorType(SectorType sec);
 };

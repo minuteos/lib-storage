@@ -12,10 +12,14 @@
 
 #define MYDBG(...)  DBGCL("SPIFlash", __VA_ARGS__)
 
-//#define SPI_FLASH_DIAG    1
+#define DIAG_READ   1
+#define DIAG_WRITE  2
+#define DIAG_WAIT   4
+
+//#define SPI_FLASH_DIAG    DIAG_WRITE
 
 #if SPI_FLASH_DIAG
-#define MYDIAG(...)	MYDBG(__VA_ARGS__)
+#define MYDIAG(mask, ...)	if ((SPI_FLASH_DIAG) & (mask)) { MYDBG(__VA_ARGS__); }
 #else
 #define MYDIAG(...)
 #endif
@@ -107,7 +111,9 @@ async_def(
 
     // make sure the device is not completing some previous operation
     deviceBusy = true;
-    await(Sync);
+    await(SyncAndAcquire);
+    spi.Release();
+
     async_return(true);
 }
 async_end
@@ -183,19 +189,14 @@ async_def(
     bus::SPI::Descriptor tx[2];
 )
 {
-    if (deviceBusy)
-    {
-        await(Sync);
-    }
-
-    await(spi.Acquire, cs);
+    await(SyncAndAcquire);
     f.req = { OP_READ, TO_BE24(addr) };
     f.tx[0].Transmit(f.req);
     f.tx[1].Receive(Buffer(buffer, length));
     await(spi.Transfer, f.tx);
     spi.Release();
 
-    MYDIAG("Read %d bytes @ %X : %H", length, addr, Span(buffer, length));
+    MYDIAG(DIAG_READ, "%X==%H", addr, Span(buffer, length));
 }
 async_end
 
@@ -256,26 +257,23 @@ async_def(
 {
     while (f.written < length)
     {
-        if (deviceBusy)
-        {
-            await(Sync);
-        }
+        await(SyncAndAcquire);
 
-        await(spi.Acquire, cs);
+        f.len = std::min(PageRemaining(addr + f.written), length - f.written);
+        MYDIAG(DIAG_WRITE, "%X=%H", addr + f.written, Span(data + f.written, f.len));
+
         f.req.op = OP_WREN;
         f.tx[0].Transmit(f.req.op);
         await(spi.Transfer, f.tx[0]);
 
-        f.len = std::min(PageRemaining(addr + f.written), length - f.written);
         f.req = { OP_PROGRAM, TO_BE24(addr + f.written) };
         f.tx[0].Transmit(f.req);
         f.tx[1].Transmit(Span(data + f.written, f.len));
         await(spi.Transfer, f.tx);
-        spi.Release();
 
         deviceBusy = true;
+        spi.Release();
 
-        MYDIAG("Written %d bytes @ %X : %H", f.len, addr + f.written, Span(data + f.written, f.len));
         f.written += f.len;
     }
 }
@@ -296,26 +294,23 @@ async_def(
     f.value = value;
     while (f.written < length)
     {
-        if (deviceBusy)
-        {
-            await(Sync);
-        }
+        await(SyncAndAcquire);
 
-        await(spi.Acquire, cs);
+        f.len = std::min(PageRemaining(addr + f.written), length - f.written);
+        MYDIAG(DIAG_WRITE, "%X=%d*%02X", addr + f.written, f.len, f.value);
+
         f.req.op = OP_WREN;
         f.tx[0].Transmit(f.req.op);
         await(spi.Transfer, f.tx[0]);
 
-        f.len = std::min(PageRemaining(addr + f.written), length - f.written);
         f.req = { OP_PROGRAM, TO_BE24(addr + f.written) };
         f.tx[0].Transmit(f.req);
         f.tx[1].TransmitSame(&f.value, f.len);
         await(spi.Transfer, f.tx);
-        spi.Release();
 
         deviceBusy = true;
+        spi.Release();
 
-        MYDIAG("Filled %d bytes @ %X = %02X", f.len, addr + f.written, f.value);
         f.written += f.len;
     }
 }
@@ -338,12 +333,7 @@ async_def(
         async_return(true);
     }
 
-    if (deviceBusy)
-    {
-        await(Sync);
-    }
-
-    await(spi.Acquire, cs);
+    await(SyncAndAcquire);
     f.tx[0].Transmit(f.req);
     f.req.op = OP_READ;
     Buffer(f.buf).Fill(0xFF);
@@ -356,7 +346,7 @@ async_def(
 
         if (f.buf[0] != ~0u || f.buf[1] != ~0u || f.buf[2] != ~0u || f.buf[3] != ~0u)
         {
-            MYDIAG("Flash not empty @ %X: %H", addr + f.checked, Span(f.buf));
+            MYDIAG(DIAG_READ, "%X!=empty: %H", addr + f.checked, Span(f.buf));
             spi.Release();
             async_return(false);
         }
@@ -421,21 +411,19 @@ async_def(
             f.req = { sector[i].op, TO_BE24(start) };
             f.end = start + SectorSize(i);
 
-            if (deviceBusy)
-            {
-                await(Sync);
-            }
+            await(SyncAndAcquire);
+            MYDIAG(DIAG_WRITE, "%X...", FROM_BE24(f.req.addrBE));
 
-            await(spi.Acquire, cs);
             f.wren = OP_WREN;
             f.tx.Transmit(f.wren);
             await(spi.Transfer, f.tx);
 
             f.tx.Transmit(f.req);
             await(spi.Transfer, f.tx);
-            spi.Release();
 
             deviceBusy = true;
+            spi.Release();
+
             async_return(f.end);
         }
     }
@@ -453,27 +441,23 @@ async_def(
 {
     MYDBG("Starting mass erase");
 
-    if (deviceBusy)
-    {
-        await(Sync);
-    }
+    await(SyncAndAcquire);
 
-    await(spi.Acquire, cs);
     f.op = OP_WREN;
     f.tx.Transmit(f.op);
     await(spi.Transfer, f.tx);
     f.op = OP_CHIP_ERASE;
     await(spi.Transfer, f.tx);
-    spi.Release();
 
     deviceBusy = true;
-    await(Sync);
+    await(SyncAndAcquire);
+    spi.Release();
 
     MYDBG("Mass erase complete");
 }
 async_end
 
-async(SPIFlash::Sync)
+async(SPIFlash::SyncAndAcquire)
 async_def(
     unsigned attempt;
     uint8_t op;
@@ -481,6 +465,8 @@ async_def(
     bus::SPI::Descriptor tx[2];
 )
 {
+    await(spi.Acquire, cs);
+
     if (!deviceBusy)
     {
         async_return(true);
@@ -492,15 +478,13 @@ async_def(
 
     for (f.attempt = 0; ; f.attempt++)
     {
-        await(spi.Acquire, cs);
         await(spi.Transfer, f.tx);
-        spi.Release();
 
         if (!GETBIT(f.status, 0))
         {
             if (f.attempt)
             {
-                MYDIAG("status polled %d times before operation completed", f.attempt);
+                MYDIAG(DIAG_WAIT, "...%d", f.attempt);
             }
             deviceBusy = false;
             break;
@@ -508,7 +492,9 @@ async_def(
         else
         {
             // let other tasks do their work
+            spi.Release();
             async_yield();
+            await(spi.Acquire, cs);
         }
     }
 }
