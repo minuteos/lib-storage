@@ -30,6 +30,7 @@ namespace storage
 async(SPIFlash::Init)
 async_def(
     int i;
+    uint32_t id;
     uint32_t jedecAddr, jedecSize;
     union
     {
@@ -40,6 +41,9 @@ async_def(
 )
 {
     init = false;
+
+    // first read device ID - this also wakes up the device from powerdown if needed
+    f.id = await(ReadID);
 
     await(ReadSFDP, 0, f.sfdpHeader);
     if (f.sfdpHeader.sig != ID("SFDP"))
@@ -99,10 +103,9 @@ async_def(
     if (size == 0)
     {
         MYDBG("Density missing in SFDP, using RDID");
-        int id = await(ReadID);
         MYDBG("RDID: mfg = %02X, type = %02X, capacity = %02X",
-            uint8_t(id), uint8_t(id >> 8), uint8_t(id >> 16));
-        size = 1 << uint8_t(id >> 16);
+            uint8_t(f.id), uint8_t(f.id >> 8), uint8_t(f.id >> 16));
+        size = 1 << uint8_t(f.id >> 16);
     }
 
     MYDBG("%d MB FLASH detected", size / 1024 / 1024);
