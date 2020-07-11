@@ -243,16 +243,14 @@ async_def(
     } req;
     bus::SPI::Descriptor tx[2];
     size_t read;
-    Timeout timeout;
 )
 {
-    f.timeout = timeout.MakeAbsolute();
     f.req.op = OP_READ;
     f.tx[0].Transmit(f.req);
 
     while (f.read < length)
     {
-        if (!pipe.Available() && !await(pipe.Allocate, length - f.read, f.timeout))
+        if (!pipe.Available() && !await(pipe.Allocate, length - f.read, timeout))
         {
             break;
         }
@@ -267,11 +265,6 @@ async_def(
 
         pipe.Advance(f.tx[1].Length());
         f.read += f.tx[1].Length();
-
-        if (f.timeout.Elapsed())
-        {
-            break;
-        }
     }
 
     async_return(f.read);
