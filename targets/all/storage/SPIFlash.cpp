@@ -440,12 +440,11 @@ async_def(
     {
         if ((start & MASK(SectorSizeBits(i))) == 0 && (start + SectorSize(i)) <= end)
         {
-            MYDBG("erasing %d KB block starting at %X", SectorSize(i) / 1024, start);
-
             f.req = { sector[i].op, TO_BE24(start) };
             f.end = start + SectorSize(i);
 
             await(SyncAndAcquire);
+            MYDBG("erasing %d KB block starting at %X", (f.end - FROM_BE24(f.req.addrBE)) / 1024, FROM_BE24(f.req.addrBE));
             MYDIAG(DIAG_WRITE, "%X...", FROM_BE24(f.req.addrBE));
 
             f.wren = OP_WREN;
