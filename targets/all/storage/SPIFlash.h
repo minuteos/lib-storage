@@ -14,6 +14,7 @@
 #include <bus/SPI.h>
 
 #include <io/PipeWriter.h>
+#include <io/PipeReader.h>
 
 namespace storage
 {
@@ -34,6 +35,8 @@ public:
     async(ReadToPipe, io::PipeWriter pipe, uint32_t addr, size_t length, Timeout timeout = Timeout::Infinite);
     //! Writes data to the SPI flash memory
     async(Write, uint32_t addr, Span data) { return async_forward(WriteImpl, addr, data.Pointer(), data.Length()); }
+    //! Writes data to the SPI flash memory directly from the specified I/O pipe
+    async(WriteFromPipe, io::PipeReader pipe, uint32_t addr, size_t length, Timeout timeout = Timeout::Infinite);
     //! Fills a range of the SPI flash memory
     async(Fill, uint32_t addr, uint8_t value, size_t length);
     //! Checks if a range of the SPI flash memory is empty

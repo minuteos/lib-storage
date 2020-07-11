@@ -306,6 +306,29 @@ async_def(
 }
 async_end
 
+async(SPIFlash::WriteFromPipe, io::PipeReader pipe, uint32_t addr, size_t length, Timeout timeout)
+async_def(
+    size_t written;
+    Span span;
+)
+{
+    while (f.written < length)
+    {
+        if (!pipe.Available() && !await(pipe.Require, 1, timeout))
+        {
+            break;
+        }
+
+        f.span = pipe.GetSpan().Left(length - f.written);
+        await(Write, addr + f.written, f.span);
+        pipe.Advance(f.span.Length());
+        f.written += f.span.Length();
+    }
+
+    async_return(f.written);
+}
+async_end
+
 async(SPIFlash::Fill, uint32_t addr, uint8_t value, size_t length)
 async_def(
     uint8_t value;
