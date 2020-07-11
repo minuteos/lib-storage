@@ -534,4 +534,12 @@ async_def(
 }
 async_end
 
+async(SPIFlash::Sync)
+async_def()
+{
+    await(SyncAndAcquire);
+    spi.Release();
+}
+async_end
+
 }

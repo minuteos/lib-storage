@@ -47,6 +47,8 @@ public:
     async(EraseFirst, uint32_t addr, uint32_t length);
     //! Erases the entire SPI flash memory
     async(MassErase);
+    //! Makes sure all SPI flash write operations have completed
+    async(Sync);
 
     //! Size of the SPI flash memory in bytes
     uint32_t Size() const { return size; }
