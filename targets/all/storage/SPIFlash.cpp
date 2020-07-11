@@ -190,16 +190,47 @@ async_def(
         uint32_t addrBE : 24;
     } req;
     bus::SPI::Descriptor tx[2];
+    size_t read;
 )
 {
-    await(SyncAndAcquire);
-    f.req = { OP_READ, TO_BE24(addr) };
-    f.tx[0].Transmit(f.req);
-    f.tx[1].Receive(Buffer(buffer, length));
-    await(spi.Transfer, f.tx);
-    spi.Release();
+    while (f.read < length)
+    {
+        await(SyncAndAcquire);
+        f.req = { OP_READ, TO_BE24(addr + f.read) };
+        f.tx[0].Transmit(f.req);
+        f.tx[1].Receive(Buffer(buffer + f.read, std::min(length - f.read, spi.MaximumTransferSize())));
+        await(spi.Transfer, f.tx);
+        spi.Release();
+        f.read += f.tx[1].Length();
+    }
 
     MYDIAG(DIAG_READ, "%X==%H", addr, Span(buffer, length));
+}
+async_end
+
+async(SPIFlash::ReadToRegister, uint32_t addr, volatile void* reg, size_t length)
+async_def(
+    PACKED_UNALIGNED_STRUCT
+    {
+        uint8_t op;
+        uint32_t addrBE : 24;
+    } req;
+    bus::SPI::Descriptor tx[2];
+    size_t read;
+)
+{
+    while (f.read < length)
+    {
+        await(SyncAndAcquire);
+        f.req = { OP_READ, TO_BE24(addr + f.read) };
+        f.tx[0].Transmit(f.req);
+        f.tx[1].ReceiveSame(reg, std::min(length - f.read, spi.MaximumTransferSize()));
+        await(spi.Transfer, f.tx);
+        spi.Release();
+        f.read += f.tx[1].Length();
+    }
+
+    MYDIAG(DIAG_READ, "%X=%d=>%p", addr, length, reg);
 }
 async_end
 

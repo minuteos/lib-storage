@@ -28,6 +28,8 @@ public:
     async(Init);
     //! Reads data from the SPI flash memory into the specified buffer
     async(Read, uint32_t addr, Buffer data) { return async_forward(ReadImpl, addr, data.Pointer(), data.Length()); }
+    //! Reads data from the SPI flash memory into the specified memory location (e.g. hardware register)
+    async(ReadToRegister, uint32_t addr, volatile void* reg, size_t length);
     //! Reads data from the SPI flash memory directly into the specified I/O pipe
     async(ReadToPipe, io::PipeWriter pipe, uint32_t addr, size_t length, Timeout timeout = Timeout::Infinite);
     //! Writes data to the SPI flash memory
