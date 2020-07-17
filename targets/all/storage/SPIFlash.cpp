@@ -418,6 +418,11 @@ async_def(
     f.start = addr & ~mask;
     f.end = (addr + len + mask) & ~mask;
 
+    if (f.start == 0 && f.end == Size())
+    {
+        async_return(await(MassErase));
+    }
+
     while (f.start < f.end)
     {
         uint32_t next = await(EraseFirst, f.start, f.end - f.start);

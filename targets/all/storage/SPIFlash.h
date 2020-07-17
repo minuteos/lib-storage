@@ -201,6 +201,8 @@ private:
     async(SyncAndAcquire);
 
     void AddSectorType(SectorType sec);
+
+    friend class SPIFlashStorage;
 };
 
 }
