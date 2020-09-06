@@ -49,6 +49,8 @@ public:
     constexpr size_t Size() const { return size; }
     //! Gets the sector size in bytes
     constexpr size_t SectorSize() const { return sectorMask + 1; }
+    //! Gets the number of bits covered by sector
+    constexpr size_t SectorSizeBits() const { return 32 - __builtin_clz(sectorMask); }
     //! Gets the sector mask
     constexpr uint32_t SectorMask() const { return sectorMask; }
     //! Gets the address of the beginning of the sector

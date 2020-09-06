@@ -29,10 +29,12 @@ private:
     uint32_t start;
 
     async(ReadImpl, uint32_t addr, void* buffer, size_t length) final override;
+    async(WriteImpl, uint32_t addr, const void* buffer, size_t length) final override;
+
+public:
     async(ReadToRegister, uint32_t addr, volatile void* reg, size_t length) final override;
     async(ReadToPipe, io::PipeWriter pipe, uint32_t addr, size_t length, Timeout timeout) final override;
 
-    async(WriteImpl, uint32_t addr, const void* buffer, size_t length) final override;
     async(WriteFromPipe, io::PipeReader pipe, uint32_t addr, size_t length, Timeout timeout) final override;
     async(Fill, uint32_t addr, uint8_t value, size_t length) final override;
 
