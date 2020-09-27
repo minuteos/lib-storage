@@ -14,7 +14,7 @@ namespace storage
 async(SPIFlashStorage::Init, uint32_t start, size_t length)
 async_def()
 {
-    if (!flash.init)
+    while (!flash.init)
     {
         await(flash.Init);
     }
