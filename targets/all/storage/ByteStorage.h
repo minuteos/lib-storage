@@ -16,6 +16,8 @@
 namespace storage
 {
 
+class ByteStorageSpan;
+
 //! Represents external byte-addressable storage that can be
 //! erased only by sectors (e.g. NOR Flash)
 class ByteStorage
@@ -60,7 +62,14 @@ public:
     //! Checks if the two addresses are in the same sector
     constexpr bool IsSameSector(uint32_t addr1, uint32_t addr2) { return !((addr1 ^ addr2) & ~sectorMask); }
     //! Calculates the remaining bytes from the specified address to the end of the sector
-    size_t SectorRemaining(uint32_t addr, uint32_t n = 0) { return (~addr & sectorMask) + 1; }
+    size_t SectorRemaining(uint32_t addr) { return (~addr & sectorMask) + 1; }
+
+    //! Gets the specified sub-span of the entire storage
+    ByteStorageSpan GetSpan(uint32_t addr, size_t length);
+    //! Gets the span representing the specified sector
+    ByteStorageSpan SectorSpan(uint32_t addr);
+    //! Gets the span representing the rest of the specified sector (from addr to end)
+    ByteStorageSpan RestOfSectorSpan(uint32_t addr);
 
 protected:
     void Initialize(size_t size, size_t sectorSize)
@@ -81,3 +90,5 @@ private:
 };
 
 }
+
+#include <storage/ByteStorageSpan.h>
