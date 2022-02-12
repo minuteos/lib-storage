@@ -366,7 +366,7 @@ async_def(
 }
 async_end
 
-async(SPIFlash::IsEmpty, uint32_t addr, size_t length)
+async(SPIFlash::IsAll, uint32_t addr, uint8_t value, size_t length)
 async_def(
     PACKED_UNALIGNED_STRUCT
     {
@@ -386,7 +386,7 @@ async_def(
     await(SyncAndAcquire);
     f.tx[0].Transmit(f.req);
     f.req.op = OP_READ;
-    Buffer(f.buf).Fill(0xFF);
+    Buffer(f.buf).Fill(value);
 
     while (f.checked < length)
     {
@@ -394,9 +394,11 @@ async_def(
         f.tx[1].Receive(Buffer(f.buf, std::min(sizeof(f.buf), length - f.checked)));
         await(spi.Transfer, f.tx);
 
-        if (f.buf[0] != ~0u || f.buf[1] != ~0u || f.buf[2] != ~0u || f.buf[3] != ~0u)
+        uint32_t val = value | value << 8;
+        val |= val << 16;
+        if (f.buf[0] != val || f.buf[1] != val || f.buf[2] != val || f.buf[3] != val)
         {
-            MYDIAG(DIAG_READ, "%X!=empty: %H", addr + f.checked, Span(f.buf));
+            MYDIAG(DIAG_READ, "%X!=%X: %H", addr + f.checked, value, Span(f.buf));
             spi.Release();
             async_return(false);
         }

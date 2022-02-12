@@ -34,7 +34,9 @@ public:
     //! Fills a range of the storage with the specified value
     virtual async(Fill, uint32_t addr, uint8_t value, size_t length) = 0;
     //! Checks if a range of the storage is empty
-    virtual async(IsEmpty, uint32_t addr, size_t length) = 0;
+    async(IsEmpty, uint32_t addr, size_t length) { return async_forward(IsAll, addr, 0xFF, length); }
+    //! Checks if a range of the storage is filled with the specified value
+    virtual async(IsAll, uint32_t addr, uint8_t value, size_t length) = 0;
     //! Erases at least the specified range of the storage, depending on sector size
     virtual async(Erase, uint32_t addr, uint32_t length) = 0;
     //! Erases the first block of the specified range of the storage, depending on sector size

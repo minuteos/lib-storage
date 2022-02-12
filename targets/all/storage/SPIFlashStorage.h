@@ -38,7 +38,7 @@ public:
     async(WriteFromPipe, io::PipeReader pipe, uint32_t addr, size_t length, Timeout timeout) final override;
     async(Fill, uint32_t addr, uint8_t value, size_t length) final override;
 
-    async(IsEmpty, uint32_t addr, size_t length) final override;
+    async(IsAll, uint32_t addr, uint8_t value, size_t length) final override;
     async(Erase, uint32_t addr, uint32_t length) final override;
     async(EraseFirst, uint32_t addr, uint32_t length) final override;
     async(Sync) final override { return async_forward(flash.Sync); }

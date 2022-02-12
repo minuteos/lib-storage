@@ -40,7 +40,9 @@ public:
     //! Fills a range of the SPI flash memory
     async(Fill, uint32_t addr, uint8_t value, size_t length);
     //! Checks if a range of the SPI flash memory is empty
-    async(IsEmpty, uint32_t addr, size_t length);
+    async(IsEmpty, uint32_t addr, size_t length) { return async_forward(IsAll, addr, 0xFF, length); }
+    //! Checks if a range of the SPI flash memory is filled with the specified value
+    async(IsAll, uint32_t addr, uint8_t value, size_t length);
     //! Flushes any unwritten data to the SPI flash memory (noop, just for interface compatibility with BufferedSPIFlash)
     async(Flush) async_def_return(true);
     //! Erases at least the specified range of the SPI flash memory, depending on smallest sector size

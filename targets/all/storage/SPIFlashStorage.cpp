@@ -19,7 +19,7 @@ async_def()
         await(flash.Init);
     }
     this->start = start;
-    Initialize(length ? start + length : flash.Size() - start, flash.SectorSize());
+    Initialize(nonzero(length, flash.Size() - start), flash.SectorSize());
     ASSERT(start <= flash.Size());
     ASSERT(start + Size() <= flash.Size());
 }
@@ -69,11 +69,11 @@ async(SPIFlashStorage::Fill, uint32_t addr, uint8_t value, size_t length)
 }
 
 
-async(SPIFlashStorage::IsEmpty, uint32_t addr, size_t length)
+async(SPIFlashStorage::IsAll, uint32_t addr, uint8_t value, size_t length)
 {
     ASSERT(addr <= Size());
     ASSERT(addr + length <= Size());
-    return async_forward(flash.IsEmpty, start + addr, length);
+    return async_forward(flash.IsAll, start + addr, value, length);
 }
 
 async(SPIFlashStorage::Erase, uint32_t addr, uint32_t length)
