@@ -1,9 +1,9 @@
 /*
- * Copyright (c) 2020 triaxis s.r.o.
+ * Copyright (c) 2022 triaxis s.r.o.
  * Licensed under the MIT license. See LICENSE.txt file in the repository root
  * for full license information.
  *
- * storage/SPIFlashStorage.h
+ * test/storage/TestByteStorage.cpp
  */
 
 #pragma once
@@ -11,27 +11,33 @@
 #include <kernel/kernel.h>
 
 #include <storage/ByteStorage.h>
-#include <storage/SPIFlash.h>
 
 namespace storage
 {
 
-class SPIFlashStorage : public ByteStorage
+class TestByteStorage : public ByteStorage
 {
 public:
-    SPIFlashStorage(SPIFlash& flash)
-        : flash(flash) {}
+    TestByteStorage(size_t size, size_t sectorSize = 1024);
+    ~TestByteStorage();
 
-    async(Init, uint32_t start, size_t length = 0);
+    // various test timings
+    int tRmin = 4, tRmax = 16;      //< min/max page read cycles
+    int tWmin = 4, tWmax = 30;      //< min/max page write cycles
+    int tEPmin = 100, tEPmax = 200; //< min/max page erase cycles
 
-    constexpr uint32_t Offset() const { return start; }
+    TestByteStorage& MakeSync() { tRmin = tRmax = tWmin = tWmax = tEPmin = tEPmax = 0; return *this; }
 
 private:
-    SPIFlash& flash;
-    uint32_t start;
+    uint8_t* data;
+    static constexpr size_t pageSize = 256, pageMask = 255;
 
     async(ReadImpl, uint32_t addr, void* buffer, size_t length) final override;
     async(WriteImpl, uint32_t addr, const void* buffer, size_t length) final override;
+
+    async(Wait, int tMin, int tMax);
+
+    size_t PageRemaining(uint32_t addr) { return (~addr & 0xFF) + 1; }
 
 public:
     async(ReadToRegister, uint32_t addr, volatile void* reg, size_t length) final override;
@@ -43,7 +49,7 @@ public:
     async(IsAll, uint32_t addr, uint8_t value, size_t length) final override;
     async(Erase, uint32_t addr, uint32_t length) final override;
     async(EraseFirst, uint32_t addr, uint32_t length) final override;
-    async(Sync) final override { return async_forward(flash.Sync); }
+    async(Sync) final override async_def_return(0);
 };
 
 }

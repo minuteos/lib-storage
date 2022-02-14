@@ -255,9 +255,11 @@ async_def(
             break;
         }
 
-        auto buf = pipe.GetBuffer();
-        f.tx[1].Receive(buf.Left(spi.MaximumTransferSize()).Left(length - f.read));
-        f.req.addrBE = TO_BE24(addr + f.read);
+        {
+            Buffer buf = pipe.GetBuffer();
+            f.tx[1].Receive(buf.Left(spi.MaximumTransferSize()).Left(length - f.read));
+            f.req.addrBE = TO_BE24(addr + f.read);
+        }
 
         await(spi.Acquire, cs);
         await(spi.Transfer, f.tx);
@@ -414,7 +416,8 @@ async_def(
     uint32_t start, end;
 )
 {
-    uint32_t mask = MASK(SectorSizeBits());
+    uint32_t mask;
+    mask = SectorMask();
 
     // calculate start/end sector boundaries
     f.start = addr & ~mask;
@@ -427,7 +430,8 @@ async_def(
 
     while (f.start < f.end)
     {
-        uint32_t next = await(EraseFirst, f.start, f.end - f.start);
+        uint32_t next;
+        next = await(EraseFirst, f.start, f.end - f.start);
         if (next == f.start)
         {
             // failed to erase anything
@@ -452,16 +456,18 @@ async_def(
     bus::SPI::Descriptor tx;
 )
 {
-    uint32_t mask = MASK(SectorSizeBits());
+    uint32_t start, end, mask;
 
     // calculate start/end sector boundaries
-    uint32_t start = addr & ~mask;
-    uint32_t end = (addr + len + mask) & ~mask;
+    mask = SectorMask();
+    start = addr & ~mask;
+    end = (addr + len + mask) & ~mask;
 
     // find the largest eraseable size
-    for (int i = sectorTypeCount - 1; i >= 0; i--)
+    int i;
+    for (i = sectorTypeCount - 1; i >= 0; i--)
     {
-        if ((start & MASK(SectorSizeBits(i))) == 0 && (start + SectorSize(i)) <= end)
+        if ((start & SectorMask(i)) == 0 && (start + SectorSize(i)) <= end)
         {
             f.req = { sector[i].op, TO_BE24(start) };
             f.end = start + SectorSize(i);
