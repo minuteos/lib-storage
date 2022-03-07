@@ -65,6 +65,7 @@ public:
 
         constexpr bool IsValid() const { return s.IsValid(); }
         constexpr operator bool() const { return IsValid(); }
+        constexpr uint32_t Address() const { return s.addr; }
 
     private:
         Sector s;
