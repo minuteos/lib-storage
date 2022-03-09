@@ -15,17 +15,64 @@
 #define DIAG_READ   1
 #define DIAG_WRITE  2
 #define DIAG_WAIT   4
+#define DIAG_STATS  8
+#define DIAG_CACHE_READ   16
 
 //#define SPI_FLASH_DIAG    DIAG_WRITE
 
 #if SPI_FLASH_DIAG
+#define SPI_FLASH_DIAG_STATS    ((SPI_FLASH_DIAG) & DIAG_STATS)
 #define MYDIAG(mask, ...)	if ((SPI_FLASH_DIAG) & (mask)) { MYDBG(__VA_ARGS__); }
 #else
+#define SPI_FLASH_DIAG_STATS    0
 #define MYDIAG(...)
 #endif
 
+#if SPI_FLASH_DIAG_STATS
+#define INCSTAT(stat)   l_stats.Increment(l_stats.stat);
+static struct
+{
+    int reads, writes, erases, emptyChecks;
+    int pageReads, pageWrites, sectorErases, waits;
+    int dump, ver;
+
+    void Increment(int& stat) { stat++; ver++; }
+    async(Dump)
+    async_def()
+    {
+        for (;;)
+        {
+            async_delay_sec(1);
+            if (dump != ver)
+            {
+                dump = ver;
+                MYDBG("STATS: R:%d W:%d E:%d C:%d PR:%d PW:%d SE:%d WT:%d", reads, writes, erases, emptyChecks, pageReads, pageWrites, sectorErases, waits);
+            }
+        }
+    }
+    async_end
+
+} l_stats;
+
+#else
+#define INCSTAT(...)
+#endif
 namespace storage
 {
+
+SPIFlash::SPIFlash(bus::SPI spi, GPIOPin cs, size_t cachePages)
+    : spi(spi), cs(spi.GetChipSelect(cs)), cachePages(cachePages)
+{
+    cache = cachePages ? new Cache[cachePages] : NULL;
+#if SPI_FLASH_DIAG_STATS
+    kernel::Task::Run(l_stats, &decltype(l_stats)::Dump);
+#endif
+}
+
+SPIFlash::~SPIFlash()
+{
+    delete[] cache;
+}
 
 async(SPIFlash::Init)
 async_def(
@@ -184,27 +231,67 @@ async_end
 
 async(SPIFlash::ReadImpl, uint32_t addr, char* buffer, size_t length)
 async_def(
+    size_t read;
+)
+{
+    while (f.read < length)
+    {
+        Cache* c;
+        c = (Cache*)await(EnsureCache, CacheAddress(addr + f.read));
+        size_t block = std::min(length - f.read, CacheRemaining(addr + f.read));
+        memcpy(buffer + f.read, c->data + CacheOffset(addr + f.read), block);
+        f.read += block;
+    }
+
+    INCSTAT(reads);
+    MYDIAG(DIAG_READ, "%X==%H", addr, Span(buffer, length));
+}
+async_end
+
+async(SPIFlash::EnsureCache, uint32_t addr)
+async_def(
+    Cache* c;
     PACKED_UNALIGNED_STRUCT
     {
         uint8_t op;
         uint32_t addrBE : 24;
     } req;
     bus::SPI::Descriptor tx[2];
-    size_t read;
+    mono_t t0;
 )
 {
-    while (f.read < length)
+    for (size_t i = 0; i < cachePages; i++)
     {
-        await(SyncAndAcquire);
-        f.req = { OP_READ, TO_BE24(addr + f.read) };
-        f.tx[0].Transmit(f.req);
-        f.tx[1].Receive(Buffer(buffer + f.read, std::min(length - f.read, spi.MaximumTransferSize())));
-        await(spi.Transfer, f.tx);
-        spi.Release();
-        f.read += f.tx[1].Length();
+        if (cache[i].address == addr)
+        {
+            cache[i].gen = cacheGen++;
+            async_return(intptr_t(&cache[i]));
+        }
     }
 
-    MYDIAG(DIAG_READ, "%X==%H", addr, Span(buffer, length));
+    f.t0 = MONO_CLOCKS;
+    await(SyncAndAcquire);
+
+    f.c = &cache[0];
+    for (size_t i = 1; i < cachePages; i++)
+    {
+        if (OVF_GT(cache[i].gen, cacheGen) || OVF_LT(cache[i].gen, f.c->gen))
+        {
+            f.c = &cache[i];
+        }
+    }
+
+    f.c->address = ~0u;
+    f.req = { OP_READ, TO_BE24(addr) };
+    f.tx[0].Transmit(f.req);
+    f.tx[1].Receive(f.c->data);
+    await(spi.Transfer, f.tx);
+    spi.Release();
+    INCSTAT(pageReads);
+    MYDIAG(DIAG_CACHE_READ, "cache %d: %X %d", f.c - cache, addr, MONO_CLOCKS - f.t0);
+    f.c->address = addr;
+    f.c->gen = cacheGen++;
+    async_return(intptr_t(f.c));
 }
 async_end
 
@@ -227,9 +314,11 @@ async_def(
         f.tx[1].ReceiveSame(reg, std::min(length - f.read, spi.MaximumTransferSize()));
         await(spi.Transfer, f.tx);
         spi.Release();
+        INCSTAT(pageReads);
         f.read += f.tx[1].Length();
     }
 
+    INCSTAT(reads);
     MYDIAG(DIAG_READ, "%X=%d=>%p", addr, length, reg);
 }
 async_end
@@ -257,6 +346,17 @@ async_def(
 
         {
             Buffer buf = pipe.GetBuffer();
+
+            for (size_t i = 0; i < cachePages; i++)
+            {
+                if (cache[i].address == CacheAddress(addr + f.read))
+                {
+                    auto part = cache[i].GetSpan(addr + f.read, length - f.read);
+                    part.CopyTo(buf);
+                    goto cachedRead;
+                }
+            }
+
             f.tx[1].Receive(buf.Left(spi.MaximumTransferSize()).Left(length - f.read));
             f.req.addrBE = TO_BE24(addr + f.read);
         }
@@ -264,11 +364,13 @@ async_def(
         await(spi.Acquire, cs);
         await(spi.Transfer, f.tx);
         spi.Release();
-
+        INCSTAT(pageReads);
+cachedRead:
         pipe.Advance(f.tx[1].Length());
         f.read += f.tx[1].Length();
     }
 
+    INCSTAT(reads);
     async_return(f.read);
 }
 async_end
@@ -291,6 +393,21 @@ async_def(
         f.len = std::min(PageRemaining(addr + f.written), length - f.written);
         MYDIAG(DIAG_WRITE, "%X=%H", addr + f.written, Span(data + f.written, f.len));
 
+        // modify cached page data
+        for (size_t i = 0; i < cachePages; i++)
+        {
+            if (cache[i].address == CacheAddress(addr + f.written))
+            {
+                const char* src = data + f.written;
+                char* dst = cache[i].data + CacheOffset(addr + f.written);
+                for (size_t ii = 0; ii < f.len; ii++)
+                {
+                    *dst++ &= *src++;
+                }
+                cache[i].gen = cacheGen++;
+            }
+        }
+
         f.req.op = OP_WREN;
         f.tx[0].Transmit(f.req.op);
         await(spi.Transfer, f.tx[0]);
@@ -302,9 +419,12 @@ async_def(
 
         deviceBusy = true;
         spi.Release();
+        INCSTAT(pageWrites);
 
         f.written += f.len;
     }
+
+    INCSTAT(writes);
 }
 async_end
 
@@ -351,6 +471,20 @@ async_def(
         f.len = std::min(PageRemaining(addr + f.written), length - f.written);
         MYDIAG(DIAG_WRITE, "%X=%d*%02X", addr + f.written, f.len, f.value);
 
+        // modify cached page data
+        for (size_t i = 0; i < cachePages; i++)
+        {
+            if (cache[i].address == CacheAddress(addr + f.written))
+            {
+                char* dst = cache[i].data + CacheOffset(addr + f.written);
+                for (size_t ii = 0; ii < f.len; ii++)
+                {
+                    *dst++ &= value;
+                }
+                cache[i].gen = cacheGen++;
+            }
+        }
+
         f.req.op = OP_WREN;
         f.tx[0].Transmit(f.req.op);
         await(spi.Transfer, f.tx[0]);
@@ -362,6 +496,7 @@ async_def(
 
         deviceBusy = true;
         spi.Release();
+        INCSTAT(pageWrites);
 
         f.written += f.len;
     }
@@ -370,43 +505,24 @@ async_end
 
 async(SPIFlash::IsAll, uint32_t addr, uint8_t value, size_t length)
 async_def(
-    PACKED_UNALIGNED_STRUCT
-    {
-        uint8_t op;
-        uint32_t addrBE : 24;
-    } req;
-    uint32_t buf[4];
     size_t checked;
-    bus::SPI::Descriptor tx[2];
 )
 {
-    if (!length)
-    {
-        async_return(true);
-    }
-
-    await(SyncAndAcquire);
-    f.tx[0].Transmit(f.req);
-    f.req.op = OP_READ;
-    Buffer(f.buf).Fill(value);
-
     while (f.checked < length)
     {
-        f.req.addrBE = TO_BE24(addr + f.checked);
-        f.tx[1].Receive(Buffer(f.buf, std::min(sizeof(f.buf), length - f.checked)));
-        await(spi.Transfer, f.tx);
+        Cache* c;
+        c = (Cache*)await(EnsureCache, addr + f.checked);
 
-        uint32_t val = value | value << 8;
-        val |= val << 16;
-        if (f.buf[0] != val || f.buf[1] != val || f.buf[2] != val || f.buf[3] != val)
+        auto part = c->GetSpan(addr + f.checked, length - f.checked);
+        if (!part.IsAll(value))
         {
-            MYDIAG(DIAG_READ, "%X!=%X: %H", addr + f.checked, value, Span(f.buf));
-            spi.Release();
+            MYDIAG(DIAG_READ, "%X!=%X: %H", addr + f.checked, value, part);
             async_return(false);
         }
-        f.checked += sizeof(f.buf);
+        f.checked += part.Length();
     }
-    spi.Release();
+
+    INCSTAT(emptyChecks);
     async_return(true);
 }
 async_end
@@ -440,6 +556,7 @@ async_def(
         f.start = next;
     }
 
+    INCSTAT(erases);
     async_return(true);
 }
 async_end
@@ -452,7 +569,7 @@ async_def(
         uint32_t addrBE : 24;
     } req;
     uint8_t wren;
-    uint32_t end;
+    uint32_t start, end;
     bus::SPI::Descriptor tx;
 )
 {
@@ -470,11 +587,21 @@ async_def(
         if ((start & SectorMask(i)) == 0 && (start + SectorSize(i)) <= end)
         {
             f.req = { sector[i].op, TO_BE24(start) };
+            f.start = start;
             f.end = start + SectorSize(i);
 
             await(SyncAndAcquire);
-            MYDBG("erasing %d KB block starting at %X", (f.end - FROM_BE24(f.req.addrBE)) / 1024, FROM_BE24(f.req.addrBE));
-            MYDIAG(DIAG_WRITE, "%X...", FROM_BE24(f.req.addrBE));
+            MYDBG("erasing %d KB block starting at %X", (f.end - f.start) / 1024, f.start);
+            MYDIAG(DIAG_WRITE, "%X...", f.start);
+
+            for (size_t i = 0 ; i < cachePages; i++)
+            {
+                if (cache[i].address >= f.start && cache[i].address < f.end)
+                {
+                    Buffer(cache[i].data).Fill(255);
+                    cache[i].gen = cacheGen++;
+                }
+            }
 
             f.wren = OP_WREN;
             f.tx.Transmit(f.wren);
@@ -485,6 +612,7 @@ async_def(
 
             deviceBusy = true;
             spi.Release();
+            INCSTAT(sectorErases);
 
             async_return(f.end);
         }
@@ -504,6 +632,12 @@ async_def(
     MYDBG("Starting mass erase");
 
     await(SyncAndAcquire);
+
+    for (size_t i = 0 ; i < cachePages; i++)
+    {
+        Buffer(cache[i].data).Fill(255);
+        cache[i].gen = cacheGen++;
+    }
 
     f.op = OP_WREN;
     f.tx.Transmit(f.op);
@@ -555,6 +689,7 @@ async_def(
         {
             // let other tasks do their work
             spi.Release();
+            INCSTAT(waits);
             async_yield();
             await(spi.Acquire, cs);
         }

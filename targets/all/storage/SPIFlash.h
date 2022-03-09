@@ -22,8 +22,8 @@ namespace storage
 class SPIFlash
 {
 public:
-    SPIFlash(bus::SPI spi, GPIOPin cs)
-        : spi(spi), cs(spi.GetChipSelect(cs)) {}
+    SPIFlash(bus::SPI spi, GPIOPin cs, size_t cacheSize = 4);
+    ~SPIFlash();
 
     //! Initialize the SPI flash memory, reading JEDEC data, etc.
     async(Init);
@@ -96,6 +96,9 @@ private:
         PAGE_BITS = 8,
         PAGE_SIZE = 1 << PAGE_BITS,
         PAGE_MASK = PAGE_SIZE - 1,
+
+        CACHE_LINE = 32,
+        CACHE_MASK = CACHE_LINE - 1
     };
 
     struct SFDPHeader
@@ -195,9 +198,27 @@ private:
     SectorType sector[4];
     uint32_t sectorTypeCount = 0;
 
+    struct Cache
+    {
+        uint32_t address = ~0u;
+        int gen = 0;
+        char data[CACHE_LINE];
+
+        Span GetSpan(uint32_t addr, size_t length) { return Span::Of(data).RemoveLeft(CacheOffset(addr)).Left(length); }
+    };
+
+    size_t cachePages;
+    int cacheGen = 0;
+    Cache* cache;
+
+    static constexpr uint32_t CacheAddress(uint32_t addr) { return addr & ~CACHE_MASK; }
+    static constexpr size_t CacheOffset(uint32_t addr) { return addr & CACHE_MASK; }
+    static constexpr size_t CacheRemaining(uint32_t addr) { return (~addr & CACHE_MASK) + 1; }
+
     async(ReadSFDP, uint32_t addr, Buffer buffer) { return async_forward(ReadSFDP, addr, buffer.Pointer(), buffer.Length()); }
     async(ReadSFDP, uint32_t addr, char* buffer, size_t length);
     async(ReadID);
+    async(EnsureCache, uint32_t addr);
     async(ReadImpl, uint32_t addr, char* buffer, size_t length);
     async(WriteImpl, uint32_t addr, const char* buffer, size_t length);
     async(SyncAndAcquire);
